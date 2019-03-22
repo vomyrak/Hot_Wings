@@ -81,6 +81,9 @@ RawSerial pc(SERIAL_TX, SERIAL_RX);
 Timer timer;
 Mail<mail_t, 64>mail_box;
 Queue<void, 8> inCharQ;
+
+
+/* command setting */
 float velocity_in = 0;
 float position_in = 0;
 
@@ -172,15 +175,10 @@ void ISR(){
     intState = readRotorState();
 
     stateDiff = intState - prevState;
-    //if (intState == orState) {
-        if (stateDiff == 1 || stateDiff == -5) rev_count++;
-        else if (stateDiff == -1 || stateDiff == 5) rev_count--;
-        //stage_count = 0;
-    //}
-    //else {
-        //if (stateDiff == 1 || stateDiff == -5) stage_count++;
-        //else if (stateDiff == -1 || stateDiff == 5) stage_count--;
-    //}
+
+	if (stateDiff == 1 || stateDiff == -5) rev_count++;
+	else if (stateDiff == -1 || stateDiff == 5) rev_count--;
+
     prevState = intState;
     motorOut((intState-orState+lead+6)%6); //+6 to make sure the remainder is positive
 }    
@@ -197,9 +195,8 @@ void velocity_monitor(){
     float T_out = 0;
     Ticker ticker;
     uint8_t iter_count = 0;
-    ticker.attach_us(&motorCtrlTick, 50000);
+    ticker.attach_us(&motorCtrlTick, 50000);    // to have better performance with counting for every ISR, higher sampling rate is used
     while(1){
-
         motor_control_thread.signal_wait(0x1);  // timer count 0.1s
         core_util_critical_section_enter();
         revolution_increment = rev_count / 6.0;
@@ -233,14 +230,7 @@ void velocity_monitor(){
         pwm.write(T_out);
         if (++iter_count == 20){
             iter_count = 0;
-            
-            pc.printf("Target velocity is: %.2frps, actual velocity is: %.2frps\n\r", velocity_in, -e_r_derivative);
-            pc.printf("Target revolution count is: %.2f, actual count is: %.2frps\n\r", position_in, cumulative_revolution);
-            //pc.printf("e_r: %.1f e_r_d: %.1f\n\r", e_r, e_r_derivative);
-            //pc.printf("e_s: %.1f e_s_i: %.1f\n\r", e_s, e_s_integral);
-            //pc.printf("t_r: %.1f t_s: %.1f\n\r", T_r, T_s);
-            //pc.printf("t_out: %.1f\n\r", T_out);
-            //pc.printf("lead: %d\n\r", lead);
+
         }
     }
 }
@@ -285,12 +275,10 @@ void decode_thread(void){
         char char_ptr = (char)newEvent.value.p; 
         while(char_ptr != '\r') {
             new_chars[char_index] = (uint8_t)char_ptr;
-            pc.printf("%c", char_ptr);
             newEvent = inCharQ.get();
             char_ptr = (char)newEvent.value.p;
             char_index++;
         }
-        pc.printf("\n\r");
         if (new_chars[0] == 'K') {
             if (char_index == 17){
                 for (int i = 1; i < 9; i++){
@@ -299,7 +287,6 @@ void decode_thread(void){
                 newKey_mutex.lock();
                 memcpy(key, new_chars + 1, sizeof(uint64_t));
                 newKey_mutex.unlock();
-                pc.printf("New Key: %016llX\n\r", *key);
             }
         }
         else if (new_chars[0] == 'V'){
@@ -320,28 +307,6 @@ void decode_thread(void){
                 cumulative_revolution = 0;    // total revolution count
                 e_s_integral = 0; // velocity derivative
                 newKey_mutex.unlock();
-                new_chars[char_index] = '0';
-            }
-        }
-        else if (new_chars[0] == 'Z'){
-            if (char_index < 10){
-                new_chars[char_index] = '\0';
-                if (new_chars[1] == '1'){
-                    k_pr = (float)atof((char *)(new_chars + 2));
-                    pc.printf("k_pr = %.3f", k_pr);
-                }
-                else if (new_chars[1] == '2'){
-                    k_dr = (float)atof((char *)(new_chars + 2));
-                    pc.printf("k_dr = %.3f", k_dr);
-                }
-                else if (new_chars[1] == '3'){
-                    k_ps = (float)atof((char *)(new_chars + 2));
-                    pc.printf("k_ps = %.3f", k_ps);
-                }
-                else if (new_chars[1] == '4'){
-                    k_is = (float)atof((char *)(new_chars + 2));
-                    pc.printf("k_is = %.3f", k_is);
-                }
                 new_chars[char_index] = '0';
             }
         }
@@ -377,19 +342,17 @@ int main() {
     I1.fall(&ISR);
     I2.fall(&ISR);
     I3.fall(&ISR);
+    
+    // Immediately start the motor if position_in and velocity_in are preset.
     if (position_in >= 0) lead = 2;
     else if (position_in < 0) lead = -2;
-    pc.printf("Lead is %d", lead);
     motorOut((lead + 6) % 6);
-    pc.printf("State is %d\n\r", readRotorState());
-    //Run the motor synchronisation
 
-    //orState is subtracted from future rotor state inputs to align rotor and motor states
     
     //Poll the rotor state and set the motor outputs accordingly to spin the motor
     timer.start();
     while (1) {
-/*
+
          timer_time = timer.read();
          if (timer_time >= 1){
              mail_t *mail = mail_box.alloc();
@@ -411,6 +374,6 @@ int main() {
             mail_box.put(mail);
          }
          (*nonce) += 1;
-         count += 1;*/
+         count += 1;
     }
 }
